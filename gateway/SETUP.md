@@ -23,6 +23,10 @@ Optional but recommended (limits abuse): **Storage & Databases > KV > Create** a
 **Settings > Bindings > Add > KV namespace**, variable name `LIMITS`. This turns on limits: 3 new sites a day and 120 publishes an hour per
 address, and a lock after 10 wrong passwords. Optional: a text variable `BLOCKLIST` = `badname,othername` to forbid some domain names.
 
+Hardware reports (`wifi report` in Kestrel OS): nothing more to set up. The gateway saves each report as `driver-reports/<id>.txt` in the same
+repository (the token already allows it). To keep them in a different repository, add the text variable `REPORT_REPO` = `really-gavin/SOME-REPO` and
+give the token access to that repository too. After you change `worker.js` you must paste it into the Worker again and Deploy.
+
 ## 4. Tell Kestrel where the gateway is
 Your Worker's address looks like `https://kestrel-web.YOURNAME.workers.dev`. Put that single line in a file named `gateway.txt` at the top
 of the KESTREL-WEB repository (replace the placeholder file). The Site Builder app reads it automatically, so no app update is needed if the

@@ -13,6 +13,8 @@
 //   /load      body: domain, newline, page                      ->  OK, then the page text (the Kestrel Web markup)
 //   /publish   body: key=value header lines, a line "---", the page text  ->  OK created | OK updated | ERR why
 //   /delete    body: domain=, password=, page= lines            ->  OK | ERR why
+//   /report    body: a hardware report from `wifi report` (strict line format, see validReport)  ->  OK new | OK known | ERR why
+//              Saved as driver-reports/<id>.txt in REPORT_REPO (default: REPO) for each adapter that has no driver; an existing report is never overwritten.
 // A site's password is never stored: only a salted PBKDF2 hash of it, in sites/<domain>/.owner
 
 export const MAX_BODY = 20000;
@@ -141,6 +143,26 @@ async function limit(env, key, max, ttl, msg) {
   await env.LIMITS.put(key, String(n + 1), { expirationTtl: ttl });
 }
 
+// ------------------------------------------------------------------ hardware reports (`wifi report` in Kestrel OS)
+// Only a fixed line format is accepted, so a report can carry hardware IDs and nothing else (it is later read by people and by an AI: it must stay data).
+export function validReport(text) {
+  const lines = text.replace(/\r/g, "").split("\n").filter((l) => l !== "");
+  if (lines.length < 3 || lines.length > 40) bad("not a Kestrel hardware report");
+  if (lines[0] !== "kestrel-wifi-report 1" || lines[lines.length - 1] !== "end") bad("not a Kestrel hardware report");
+  const H = "[0-9a-f]";
+  const rx = [/^kestrel [a-z0-9.-]{1,20}$/, new RegExp("^pci " + H + "{4}:" + H + "{4} sub " + H + "{8} rev " + H + "{2} class " + H + "{6} driver (yes|no)$"),
+    new RegExp("^usb " + H + "{4}:" + H + "{4} bcd " + H + "{4} class " + H + "{2} driver (yes|no)$"), new RegExp("^usbdesc " + H + "{36}$"), new RegExp("^usbcfg (" + H + "{2}){9,320}$")];
+  const ids = [];
+  for (const l of lines.slice(1, -1)) {
+    if (!rx.some((r) => r.test(l))) bad("a line of the report is not allowed: " + l.slice(0, 30).replace(/[^\x20-\x7e]/g, "?"));
+    let m;
+    if ((m = /^pci (\w{4}):(\w{4}) .* driver no$/.exec(l))) ids.push("pci-" + m[1] + "-" + m[2]);
+    if ((m = /^usb (\w{4}):(\w{4}) .* driver no$/.exec(l))) ids.push("usb-" + m[1] + "-" + m[2]);
+  }
+  if (!ids.length) bad("every adapter in the report already has a driver");
+  return { text: lines.join("\n") + "\n", ids: [...new Set(ids)].slice(0, 4) };
+}
+
 // ------------------------------------------------------------------ parsing the request
 export function parseHeaders(text) {
   const i = text.indexOf("\n---\n");
@@ -233,6 +255,18 @@ export async function handle(path, body, env, gh, ip = "") {
     await write(p + ".kml", page, "Page " + d + "/" + p);
     await write(p === "index" ? "index.html" : p + ".html", html, "Page " + d + "/" + p);
     return "OK " + (created ? "created" : "updated") + "\nkes://" + d + "/" + (p === "index" ? "" : p);
+  }
+  if (path === "/report") {
+    const { text, ids } = validReport(body);
+    await limit(env, "rep:" + ip, 10, 86400, "this address has sent enough reports for today");
+    const rgh = env.REPORT_REPO && env.REPORT_REPO !== env.REPO ? github({ ...env, REPO: env.REPORT_REPO }) : gh;
+    let fresh = 0;
+    for (const id of ids) {
+      const file = "driver-reports/" + id + ".txt";
+      if (await rgh.get(file)) continue;
+      if (await rgh.put(file, text, "Report " + id)) fresh++;
+    }
+    return "OK " + (fresh ? "new" : "known");
   }
   if (path === "/delete") {
     const { h } = parseHeaders(body);
