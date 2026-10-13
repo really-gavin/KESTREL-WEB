@@ -164,12 +164,12 @@ test("report: valid report is saved once per unsupported adapter, never overwrit
   REPORT[5] = "usbdesc " + "0".repeat(36); REPORT[6] = "usbcfg " + "09".repeat(10);
   const gh = fakeGithub();
   assert.equal(await handle("/report", REPORT.join("\n") + "\n", env, gh, "2.2.2.2"), "OK new");
-  assert.ok(gh.files.has("driver-reports/pci-8086-2725.txt") && gh.files.has("driver-reports/usb-0bda-8812.txt"));
-  assert.ok(!gh.files.has("driver-reports/pci-10ec-8125.txt"), "a supported adapter gets no file");
-  assert.equal(gh.files.get("driver-reports/usb-0bda-8812.txt").content, REPORT.join("\n") + "\n");
+  assert.ok(gh.files.has("reports/pci-8086-2725.txt") && gh.files.has("reports/usb-0bda-8812.txt"));
+  assert.ok(!gh.files.has("reports/pci-10ec-8125.txt"), "a supported adapter gets no file");
+  assert.equal(gh.files.get("reports/usb-0bda-8812.txt").content, REPORT.join("\n") + "\n");
   const other = REPORT.slice(); other[1] = "kestrel 9.9.9";
   assert.equal(await handle("/report", other.join("\n"), env, gh, "2.2.2.2"), "OK known");
-  assert.match(gh.files.get("driver-reports/usb-0bda-8812.txt").content, /kestrel 0\.12\.0/, "first report kept");
+  assert.match(gh.files.get("reports/usb-0bda-8812.txt").content, /kestrel 0\.12\.0/, "first report kept");
 });
 test("report: anything outside the fixed line format is refused", async () => {
   const gh = fakeGithub(); REPORT[5] = "usbdesc " + "0".repeat(36); REPORT[6] = "usbcfg " + "09".repeat(10);

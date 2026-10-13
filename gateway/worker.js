@@ -14,7 +14,7 @@
 //   /publish   body: key=value header lines, a line "---", the page text  ->  OK created | OK updated | ERR why
 //   /delete    body: domain=, password=, page= lines            ->  OK | ERR why
 //   /report    body: a hardware report from `wifi report` (strict line format, see validReport)  ->  OK new | OK known | ERR why
-//              Saved as driver-reports/<id>.txt in REPORT_REPO (default: REPO) for each adapter that has no driver; an existing report is never overwritten.
+//              Saved as reports/<id>.txt in REPORT_REPO (default: REPO) for each adapter that has no driver; an existing report is never overwritten.
 // A site's password is never stored: only a salted PBKDF2 hash of it, in sites/<domain>/.owner
 
 export const MAX_BODY = 20000;
@@ -262,7 +262,7 @@ export async function handle(path, body, env, gh, ip = "") {
     const rgh = env.REPORT_REPO && env.REPORT_REPO !== env.REPO ? github({ ...env, REPO: env.REPORT_REPO }) : gh;
     let fresh = 0;
     for (const id of ids) {
-      const file = "driver-reports/" + id + ".txt";
+      const file = "reports/" + id + ".txt";
       if (await rgh.get(file)) continue;
       if (await rgh.put(file, text, "Report " + id)) fresh++;
     }

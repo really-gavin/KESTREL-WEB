@@ -5,3 +5,4 @@ compatibility_date = "2025-01-01"
 [vars]
 REPO = "really-gavin/KESTREL-WEB"
 BRANCH = "main"
+REPORT_REPO = "really-gavin/KESTREL-WIFI-REPORTS"
