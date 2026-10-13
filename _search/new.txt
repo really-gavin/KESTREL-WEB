@@ -1,3 +1,4 @@
 31|kes://news/|Kestrel News|Kestrel News The Kestrel web arrives Kestrel now has its own private web with kes and kess
 4|kes://home/|Kestrel Home|Welcome to the Kestrel Web This is a small private web made for Kestrel OS. It is not conn
+3|kes://gavin/|Welcome|Welcome This is my new page on the Kestrel web. write headings with # write lists with -
 1|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks

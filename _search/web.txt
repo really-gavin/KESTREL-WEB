@@ -5,4 +5,5 @@
 4|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks
 4|kes://news/|Kestrel News|Kestrel News The Kestrel web arrives Kestrel now has its own private web with kes and kess
 3|kes://apps/|Kestrel Apps|Kestrel Apps Install an app with app install followed by its name. browser: the Kestrel we
+3|kes://gavin/|Welcome|Welcome This is my new page on the Kestrel web. write headings with # write lists with -
 3|kess://kestrel/|Kestrel Official|Kestrel Official Sites with kess addresses live in the reviewed secure folder. Only the pr
