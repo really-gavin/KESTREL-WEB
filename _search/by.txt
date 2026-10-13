@@ -1,1 +1,2 @@
 3|kes://apps/|Kestrel Apps|Kestrel Apps Install an app with app install followed by its name. browser: the Kestrel we
+3|kes://gavin/|gavin|Welcome to the very first site, made by gavin! Hope your enjoying Kesterl OS!
