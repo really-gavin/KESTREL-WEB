@@ -1,0 +1,768 @@
+// Kestrel Site Builder: write web pages and publish them to the Kestrel web (kes://yourname/).
+// Pages are written in a tiny page language:  "# Heading"  "## Smaller heading"  "- list item"  "[label](page)" on a line of its own
+// (a link to another page of the site, or to kes://site/page), and plain lines for text. Blank lines separate paragraphs.
+// Publishing sends the pages to the Kestrel Web gateway (an address kept in gateway.txt in the KESTREL-WEB repository), which checks them,
+// keeps your site's password (only a salted hash of it) and saves the site into the repository. Search finds new pages within a minute or two.
+window "Kestrel Site Builder", 640, 480;
+memory 700000;
+meta "version=1.0.0";
+meta "author=Kestrel";
+meta "description=Build a website and publish it to the Kestrel web";
+meta "permissions=network";
+
+const FW = 72;                 // bytes per text field (up to 70 characters)
+const NPG = 10;                // pages held in memory at once
+const PGSZ = 12008;
+const DOCMAX = 12000;
+const COLS = 56;
+const ROWS = 34;
+const MAXL = 900;
+const EX = 160;
+const EY = 28;
+
+const F_DOM = 0;
+const F_PW = 1;
+const F_PW2 = 2;
+const F_NAME = 3;
+const F_DESC = 4;
+const F_TAGS = 5;
+const F_PAGE = 6;
+const F_GW = 7;
+const F_DOC = 20;
+const F_LIST = 21;
+const F_BAR = 22;
+
+const S_START = 0;
+const S_EDIT = 1;
+const S_INFO = 2;
+const S_NEWPG = 3;
+
+const BG = 0xF1F5F9;
+const INK = 0x0F172A;
+const DIM = 0x64748B;
+const BLUE = 0x2563EB;
+const RED = 0xB91C1C;
+const GREEN = 0x15803D;
+const AMBER = 0xB45309;
+const HEAD = 0x172554;
+const LINK = 0x1D4ED8;
+const LIST = 0x7C3AED;
+
+byte fb[576];
+int flen[8];
+byte pgs[120080];
+int pglen[10];
+byte pgname[320];
+int pgload[10];
+int pgdirty[10];
+int npg;
+int cur;
+int cpos;
+int scrl;
+int lst[900];
+int lclr[900];
+int nl;
+int ldirty;
+byte urlb[300];
+byte reqb[20800];
+byte sbuf[260];
+byte tmp[300];
+int mcol;
+int scr;
+int focus;
+int sstate;            // 0 unknown, 1 name is free, 2 name exists
+int barsel;
+int created;           // 1 once the site exists on the gateway
+int gk;
+int gmx;
+int gmy;
+int gclk;
+byte endmark[16];
+
+// ------------------------------------------------------------------ small helpers
+int fa(int i) { return fb + i * FW; }
+int pa(int i) { return pgs + i * PGSZ; }
+int pn(int i) { return pgname + i * 32; }
+
+void copyn(int d, int s, int mx) {              // copy a line (up to a newline) of at most mx-1 characters
+  int i = 0;
+  while (i < mx - 1 && peek(s + i) != 0 && peek(s + i) != 10) { poke(d + i, peek(s + i)); i++; }
+  poke(d + i, 0);
+}
+int starts(int s, int p) {
+  int i = 0;
+  while (peek(p + i) != 0) { if (peek(s + i) != peek(p + i)) { return 0; } i++; }
+  return 1;
+}
+void setmsg(int s, int col) { copyn(sbuf, s, 250); mcol = col; }
+void fset(int f, int s) { copyn(fa(f), s, 71); flen[f] = strlen(fa(f)); }
+void fclear(int f) { poke(fa(f), 0); flen[f] = 0; }
+int puts(int at, int s) {                        // append text to the request buffer
+  int i = 0;
+  while (peek(s + i) != 0 && at < 20700) { poke(reqb + at, peek(s + i)); at++; i++; }
+  poke(reqb + at, 0);
+  return at;
+}
+int rstatus(int r) {                             // "NNN\nanswer": the status
+  int v = 0;
+  int i = 0;
+  while (peek(r + i) >= '0' && peek(r + i) <= '9') { v = v * 10 + peek(r + i) - '0'; i++; }
+  return v;
+}
+int rbody(int r) {                               // the text after the first line
+  int i = 0;
+  while (peek(r + i) != 10 && peek(r + i) != 0) { i++; }
+  if (peek(r + i) == 10) { i++; }
+  return r + i;
+}
+int answered_ok(int r) { return rstatus(r) == 200 && starts(rbody(r), "OK"); }
+void fail(int r) {
+  int st = rstatus(r);
+  int b = rbody(r);
+  if (st == 0) { strcpy(sbuf, "No answer: "); copyn(sbuf + 11, b, 230); }
+  else if (starts(b, "ERR ")) { copyn(sbuf, b + 4, 250); }
+  else { strcpy(sbuf, "The gateway gave an unexpected answer (code "); itoa(st, tmp); strcat(sbuf, tmp); strcat(sbuf, ")"); }
+  mcol = RED;
+}
+int call(int path, int body) {                   // POST body to gateway + path; returns the answer or 0 when there is no gateway
+  if (flen[F_GW] < 12) { setmsg("The publishing gateway is not set up yet. Type its address in the Gateway box.", RED); return 0; }
+  strcpy(urlb, fa(F_GW));
+  int n = strlen(urlb);
+  if (peek(urlb + n - 1) == '/') { poke(urlb + n - 1, 0); }
+  strcat(urlb, path);
+  return post(urlb, body);
+}
+
+// ------------------------------------------------------------------ the page editor
+void relayout() {
+  int a = pa(cur);
+  int n = pglen[cur];
+  int i = 0;
+  int col = 0;
+  int c;
+  int s;
+  nl = 0;
+  lst[0] = 0;
+  nl = 1;
+  while (i < n) {
+    c = peek(a + i);
+    if (c == 10) {
+      col = 0;
+      if (nl < MAXL - 1) { lst[nl] = i + 1; nl++; }
+    } else {
+      if (col == COLS && nl < MAXL - 1) { lst[nl] = i; nl++; col = 0; }
+      col++;
+    }
+    i++;
+  }
+  i = 0;
+  while (i < nl) {                               // colour of every line
+    s = lst[i];
+    if (s == 0 || peek(a + s - 1) == 10) {
+      c = peek(a + s);
+      lclr[i] = INK;
+      if (c == '#') { lclr[i] = HEAD; }
+      else if (c == '-' && peek(a + s + 1) == ' ') { lclr[i] = LIST; }
+      else if (c == '[') { lclr[i] = LINK; }
+    } else { lclr[i] = lclr[i - 1]; }
+    i++;
+  }
+  ldirty = 0;
+}
+int lend(int k) {
+  int e = pglen[cur];
+  if (k + 1 < nl) { e = lst[k + 1]; }
+  if (e > lst[k] && peek(pa(cur) + e - 1) == 10) { e--; }
+  return e;
+}
+int rowof(int pos) {
+  int k = 0;
+  while (k + 1 < nl && lst[k + 1] <= pos) { k++; }
+  return k;
+}
+void keepvisible() {
+  int r = rowof(cpos);
+  if (r < scrl) { scrl = r; }
+  if (r >= scrl + ROWS) { scrl = r - ROWS + 1; }
+  if (scrl < 0) { scrl = 0; }
+}
+void ins(int c) {
+  int n = pglen[cur];
+  int a = pa(cur);
+  int i = n;
+  if (n >= DOCMAX) { setmsg("This page is full (12000 characters).", AMBER); return; }
+  if (c == 10 && nl >= MAXL - 3) { setmsg("This page has too many lines.", AMBER); return; }
+  while (i > cpos) { poke(a + i, peek(a + i - 1)); i--; }
+  poke(a + cpos, c);
+  n++;
+  poke(a + n, 0);
+  pglen[cur] = n;
+  cpos++;
+  ldirty = 1;
+  pgdirty[cur] = 1;
+}
+void del_before() {
+  int n = pglen[cur];
+  int a = pa(cur);
+  int i;
+  if (cpos <= 0) { return; }
+  i = cpos;
+  while (i < n) { poke(a + i - 1, peek(a + i)); i++; }
+  n--;
+  poke(a + n, 0);
+  pglen[cur] = n;
+  cpos--;
+  ldirty = 1;
+  pgdirty[cur] = 1;
+}
+void del_after() {
+  if (cpos < pglen[cur]) { cpos++; del_before(); }
+}
+void move_vert(int dir) {
+  int r;
+  int col;
+  int t;
+  int len;
+  if (ldirty) { relayout(); }
+  r = rowof(cpos);
+  col = cpos - lst[r];
+  t = r + dir;
+  if (t < 0 || t >= nl) { return; }
+  len = lend(t) - lst[t];
+  if (col > len) { col = len; }
+  cpos = lst[t] + col;
+}
+void doc_key(int k) {
+  if (k >= 32 && k <= 126) { ins(k); }
+  else if (k == 10) { ins(10); }
+  else if (k == 8) { del_before(); }
+  else if (k == 127) { del_after(); }
+  else if (k == 130) { if (cpos > 0) { cpos--; } }
+  else if (k == 131) { if (cpos < pglen[cur]) { cpos++; } }
+  else if (k == 128) { move_vert(-1); }
+  else if (k == 129) { move_vert(1); }
+  if (ldirty) { relayout(); }
+  keepvisible();
+}
+void click_doc(int mx, int my) {
+  int row;
+  int col;
+  int len;
+  if (ldirty) { relayout(); }
+  row = (my - EY) / 10 + scrl;
+  if (row < 0) { row = 0; }
+  if (row >= nl) { row = nl - 1; }
+  col = (mx - EX - 4) / 8;
+  if (col < 0) { col = 0; }
+  len = lend(row) - lst[row];
+  if (col > len) { col = len; }
+  cpos = lst[row] + col;
+}
+
+// ------------------------------------------------------------------ pages
+void page_new(int idx, int name, int starter) {
+  int a = pa(idx);
+  copyn(pn(idx), name, 31);
+  poke(a, 0);
+  pglen[idx] = 0;
+  pgload[idx] = 1;
+  pgdirty[idx] = 1;
+  if (starter) {
+    strcpy(a, "# Welcome\n\nThis is my new page on the Kestrel web.\n\n- write headings with #\n- write lists with -\n");
+    pglen[idx] = strlen(a);
+  }
+}
+void select_page(int i) {
+  cur = i;
+  cpos = 0;
+  scrl = 0;
+  relayout();
+}
+void load_page(int i) {                          // fetch the page text from the gateway
+  int at;
+  int r;
+  int b;
+  int a = pa(i);
+  at = puts(0, fa(F_DOM));
+  at = puts(at, "\n");
+  at = puts(at, pn(i));
+  r = call("/load", reqb);
+  if (r == 0) { return; }
+  if (!answered_ok(r)) { fail(r); return; }
+  b = rbody(rbody(r));
+  copyn(a, b, 1);                                // (empty the buffer first)
+  at = 0;
+  while (peek(b + at) != 0 && at < DOCMAX) { poke(a + at, peek(b + at)); at++; }
+  poke(a + at, 0);
+  pglen[i] = at;
+  pgload[i] = 1;
+  pgdirty[i] = 0;
+}
+int page_by_name(int name) {
+  int i = 0;
+  while (i < npg) { if (streq(pn(i), name)) { return i; } i++; }
+  return -1;
+}
+void open_page(int i) {
+  if (!pgload[i]) {
+    setmsg("Loading the page ...", DIM);
+    draw_all();
+    present();
+    load_page(i);
+    if (!pgload[i]) { return; }
+  }
+  select_page(i);
+}
+
+// ------------------------------------------------------------------ talking to the gateway
+void find_gateway() {
+  int p = fetch("https://raw.githubusercontent.com/really-gavin/KESTREL-WEB/main/gateway.txt");
+  int i = 0;
+  while (peek(p + i) != 0) {
+    if (starts(p + i, "https://") && peek(p + i - 1) == 10) {
+      copyn(tmp, p + i, 150);
+      i = 0;
+      while (peek(tmp + i) != 0 && peek(tmp + i) != ' ' && peek(tmp + i) != 13) { i++; }
+      poke(tmp + i, 0);
+      fset(F_GW, tmp);
+      return;
+    }
+    i++;
+  }
+}
+int domain_ok() {
+  int i = 0;
+  int c;
+  int n = flen[F_DOM];
+  if (n < 3 || n > 30) { setmsg("A domain needs 3 to 30 characters: a-z, 0-9 and - .", RED); return 0; }
+  while (i < n) {
+    c = peek(fa(F_DOM) + i);
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) { setmsg("Use only lower case letters a-z, digits and - in a domain.", RED); return 0; }
+    i++;
+  }
+  if (peek(fa(F_DOM)) == '-' || peek(fa(F_DOM) + n - 1) == '-') { setmsg("A domain cannot start or end with -.", RED); return 0; }
+  return 1;
+}
+void check_name() {
+  int r;
+  sstate = 0;
+  if (!domain_ok()) { return; }
+  setmsg("Checking the name ...", DIM);
+  draw_all();
+  present();
+  r = call("/check", fa(F_DOM));
+  if (r == 0) { return; }
+  if (answered_ok(r) && starts(rbody(r), "OK free")) {
+    sstate = 1;
+    setmsg("That name is free! Choose a password for this site (6 or more characters), type it twice, and press Continue. Remember it: it is the only way to change the site later.", GREEN);
+  } else if (answered_ok(r) && starts(rbody(r), "OK taken")) {
+    sstate = 2;
+    setmsg("That site already exists. If it is yours, type its password and press Continue to edit it.", AMBER);
+  } else { fail(r); }
+}
+void open_site() {                               // an existing site: read its details and its first page
+  int r;
+  int b;
+  int i;
+  int j;
+  setmsg("Opening the site ...", DIM);
+  draw_all();
+  present();
+  r = call("/info", fa(F_DOM));
+  if (r == 0) { return; }
+  if (!answered_ok(r)) { fail(r); return; }
+  b = rbody(r);
+  fclear(F_NAME);
+  fclear(F_DESC);
+  fclear(F_TAGS);
+  npg = 0;
+  i = 0;
+  while (peek(b + i) != 0) {                     // lines: name= description= tags= pages=
+    if (starts(b + i, "name=")) { copyn(tmp, b + i + 5, 71); fset(F_NAME, tmp); }
+    else if (starts(b + i, "description=")) { copyn(tmp, b + i + 12, 71); fset(F_DESC, tmp); }
+    else if (starts(b + i, "tags=")) { copyn(tmp, b + i + 5, 71); fset(F_TAGS, tmp); }
+    else if (starts(b + i, "pages=")) {
+      j = i + 6;
+      while (peek(b + j) != 0 && peek(b + j) != 10 && npg < NPG) {
+        int n = 0;
+        while (peek(b + j) != 0 && peek(b + j) != 10 && peek(b + j) != ',' && n < 30) { poke(tmp + n, peek(b + j)); n++; j++; }
+        poke(tmp + n, 0);
+        if (n > 0) { page_new(npg, tmp, 0); pgload[npg] = 0; pgdirty[npg] = 0; npg++; }
+        if (peek(b + j) == ',') { j++; }
+      }
+    }
+    while (peek(b + i) != 0 && peek(b + i) != 10) { i++; }
+    if (peek(b + i) == 10) { i++; }
+  }
+  if (npg == 0) { page_new(0, "index", 1); npg = 1; pgdirty[0] = 1; }
+  created = 1;
+  i = page_by_name("index");
+  if (i < 0) { i = 0; }
+  scr = S_EDIT;
+  focus = F_DOC;
+  open_page(i);
+  if (pgload[i]) { setmsg("Site opened. Edit a page and press Publish.", GREEN); }
+}
+void new_site() {
+  npg = 1;
+  page_new(0, "index", 1);
+  fclear(F_NAME);
+  fclear(F_DESC);
+  fclear(F_TAGS);
+  fset(F_NAME, fa(F_DOM));
+  created = 0;
+  scr = S_EDIT;
+  focus = F_DOC;
+  select_page(0);
+  setmsg("Write your front page, then press Publish.", DIM);
+}
+void do_continue() {
+  if (sstate == 0) { check_name(); return; }
+  if (flen[F_PW] < 6) { setmsg("The password needs at least 6 characters.", RED); return; }
+  if (sstate == 1) {
+    if (!streq(fa(F_PW), fa(F_PW2))) { setmsg("The two passwords are not the same.", RED); return; }
+    new_site();
+  } else { open_site(); }
+}
+void make_title(int dst) {                       // the first "# heading" of the page, else the domain
+  int a = pa(cur);
+  while (peek(a) == 10 || peek(a) == ' ') { a++; }
+  if (peek(a) == '#' && peek(a + 1) == ' ') { copyn(dst, a + 2, 70); } else { copyn(dst, fa(F_DOM), 70); }
+  if (peek(dst) == 0) { copyn(dst, fa(F_DOM), 70); }
+}
+int publish_one(int i) {                         // 1 = published
+  int at;
+  int r;
+  int keep = cur;
+  cur = i;
+  make_title(tmp);
+  cur = keep;
+  at = puts(0, "domain=");
+  at = puts(at, fa(F_DOM));
+  at = puts(at, "\npassword=");
+  at = puts(at, fa(F_PW));
+  at = puts(at, "\nname=");
+  at = puts(at, fa(F_NAME));
+  at = puts(at, "\ndescription=");
+  at = puts(at, fa(F_DESC));
+  at = puts(at, "\ntags=");
+  at = puts(at, fa(F_TAGS));
+  at = puts(at, "\npage=");
+  at = puts(at, pn(i));
+  at = puts(at, "\ntitle=");
+  at = puts(at, tmp);
+  at = puts(at, "\n---\n");
+  at = puts(at, pa(i));
+  r = call("/publish", reqb);
+  if (r == 0) { return 0; }
+  if (answered_ok(r)) { pgdirty[i] = 0; created = 1; return 1; }
+  fail(r);
+  return 0;
+}
+void do_publish() {
+  int i = 0;
+  int done = 0;
+  if (flen[F_PW] < 6) { setmsg("Enter the site password first (Site info).", RED); return; }
+  if (!created) { pgdirty[0] = 1; }
+  pgdirty[cur] = pgdirty[cur] || !created;
+  while (i < npg) {
+    if (pgdirty[i] && pgload[i]) {
+      strcpy(sbuf, "Publishing ");
+      strcat(sbuf, pn(i));
+      strcat(sbuf, " ...");
+      mcol = DIM;
+      draw_all();
+      present();
+      if (!publish_one(i)) { return; }
+      done++;
+    }
+    i++;
+  }
+  if (done == 0) { setmsg("Nothing has changed since the last publish.", DIM); return; }
+  strcpy(sbuf, "Published! Your site is at kes://");
+  strcat(sbuf, fa(F_DOM));
+  strcat(sbuf, "/ . Search will find it within a minute or two.");
+  mcol = GREEN;
+}
+void add_page() {
+  int i;
+  int n = flen[F_PAGE];
+  int c;
+  if (n < 1 || n > 29) { setmsg("A page name has 1 to 29 characters.", RED); return; }
+  i = 0;
+  while (i < n) {
+    c = peek(fa(F_PAGE) + i);
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) { setmsg("Use only lower case letters, digits and - in a page name.", RED); return; }
+    i++;
+  }
+  if (page_by_name(fa(F_PAGE)) >= 0) { setmsg("There is already a page with that name.", RED); return; }
+  if (npg >= NPG) { setmsg("This version holds 10 pages at a time.", RED); return; }
+  page_new(npg, fa(F_PAGE), 1);
+  npg++;
+  scr = S_EDIT;
+  focus = F_DOC;
+  select_page(npg - 1);
+  setmsg("New page added. Press Publish when you are ready.", GREEN);
+}
+
+// ------------------------------------------------------------------ drawing
+void label(int x, int y, int s, int col) { text(x, y, s, col, 1); }
+void button(int x, int y, int w, int h, int s, int hot) {
+  int over = gmx >= x && gmx < x + w && gmy >= y && gmy < y + h;
+  int col = 0xE2E8F0;
+  if (over) { col = 0xCBD5E1; }
+  if (hot) { col = 0xBFDBFE; }
+  rect(x, y, w, h, 0x94A3B8);
+  rect(x + 1, y + 1, w - 2, h - 2, col);
+  text(x + (w - textw(s, 1)) / 2, y + (h - 8) / 2, s, INK, 1);
+}
+int hit(int x, int y, int w, int h) { return gclk && gmx >= x && gmx < x + w && gmy >= y && gmy < y + h; }
+void draw_field(int f, int x, int y, int w, int masked) {
+  int n = flen[f];
+  int room = (w - 8) / 8;
+  int from = 0;
+  int i;
+  rect(x, y, w, 22, 0x94A3B8);
+  rect(x + 1, y + 1, w - 2, 20, 0xFFFFFF);
+  if (focus == f) { rect(x, y + 20, w, 2, BLUE); }
+  if (n > room - 1) { from = n - room + 1; }
+  if (masked) {
+    i = 0;
+    while (i < n - from) { poke(tmp + i, '*'); i++; }
+    poke(tmp + i, 0);
+    text(x + 4, y + 7, tmp, INK, 1);
+    if (focus == f) { rect(x + 4 + (n - from) * 8, y + 4, 1, 13, BLUE); }
+  } else {
+    textr(x + 4, y + 7, fa(f), from, n, INK, 1);
+    if (focus == f) { rect(x + 4 + (n - from) * 8, y + 4, 1, 13, BLUE); }
+  }
+}
+void draw_msg(int x, int y, int cols) {          // the status message, wrapped
+  int n = strlen(sbuf);
+  int from = 0;
+  int to;
+  int row = 0;
+  while (from < n && row < 4) {
+    to = from + cols;
+    if (to >= n) { to = n; }
+    else { int b = to; while (b > from && peek(sbuf + b) != ' ') { b--; } if (b > from) { to = b; } }
+    textr(x, y + row * 11, sbuf, from, to, mcol, 1);
+    from = to;
+    if (peek(sbuf + from) == ' ') { from++; }
+    row++;
+  }
+}
+void draw_start() {
+  text(40, 26, "Kestrel Site Builder", HEAD, 2);
+  label(40, 56, "Make a website and publish it to the Kestrel web (kes://).", DIM);
+  label(40, 96, "Domain name  (your site will be kes://name/)", INK);
+  draw_field(F_DOM, 40, 108, 360, 0);
+  button(412, 108, 110, 22, "Check name", sstate == 0);
+  label(40, 146, "Password for the site", INK);
+  draw_field(F_PW, 40, 158, 360, 1);
+  if (sstate == 1) {
+    label(40, 196, "Type the password again", INK);
+    draw_field(F_PW2, 40, 208, 360, 1);
+  }
+  button(40, 252, 120, 26, "Continue", sstate != 0);
+  draw_msg(40, 296, 76);
+  label(40, 386, "Gateway (found automatically; change only if you run your own)", DIM);
+  draw_field(F_GW, 40, 398, 560, 0);
+  label(40, 440, "Tab: next box    Enter: go on    Esc: close the window", DIM);
+}
+void draw_edit() {
+  int k;
+  int y;
+  int s;
+  int e;
+  int r;
+  rect(0, 0, 640, 22, 0xE2E8F0);
+  strcpy(tmp, "kes://");
+  strcat(tmp, fa(F_DOM));
+  strcat(tmp, "/");
+  if (!streq(pn(cur), "index")) { strcat(tmp, pn(cur)); }
+  if (pgdirty[cur]) { strcat(tmp, "   (not published)"); }
+  label(8, 7, tmp, INK);
+  // page list
+  rect(0, 22, 154, 354, 0xFFFFFF);
+  if (focus == F_LIST) { rect(0, 22, 154, 2, BLUE); }
+  label(8, 28, "Pages", DIM);
+  k = 0;
+  while (k < npg) {
+    y = 42 + k * 14;
+    if (k == cur) { rect(2, y - 3, 150, 13, 0xBFDBFE); }
+    strcpy(tmp, pn(k));
+    if (pgdirty[k]) { strcat(tmp, " *"); }
+    text(8, y, tmp, INK, 1);
+    k++;
+  }
+  // editor
+  rect(EX - 4, EY - 4, 480, 352, 0xFFFFFF);
+  if (focus == F_DOC) { rect(EX - 4, EY - 4, 480, 2, BLUE); }
+  if (ldirty) { relayout(); }
+  k = scrl;
+  while (k < nl && k < scrl + ROWS) {
+    s = lst[k];
+    e = lend(k);
+    if (e > s) { textr(EX, EY + (k - scrl) * 10, pa(cur), s, e, lclr[k], 1); }
+    k++;
+  }
+  if (focus == F_DOC) {
+    r = rowof(cpos);
+    if (r >= scrl && r < scrl + ROWS) { rect(EX + (cpos - lst[r]) * 8, EY + (r - scrl) * 10 - 1, 1, 10, BLUE); }
+  }
+  // buttons and messages
+  button(8, 384, 84, 24, "Publish", barsel == 0 && focus == F_BAR);
+  button(100, 384, 90, 24, "Site info", barsel == 1 && focus == F_BAR);
+  button(198, 384, 90, 24, "New page", barsel == 2 && focus == F_BAR);
+  button(296, 384, 90, 24, "Back", barsel == 3 && focus == F_BAR);
+  draw_msg(8, 418, 76);
+  label(8, 466, "# heading   - item   [label](page) or [label](kes://site/page)   Tab: area", DIM);
+}
+void draw_info() {
+  text(40, 26, "Site info", HEAD, 2);
+  label(40, 70, "Site name", INK);
+  draw_field(F_NAME, 40, 82, 480, 0);
+  label(40, 118, "Description (one sentence for search results)", INK);
+  draw_field(F_DESC, 40, 130, 480, 0);
+  label(40, 166, "Tags (words people might search for)", INK);
+  draw_field(F_TAGS, 40, 178, 480, 0);
+  label(40, 214, "Site password (needed to publish)", INK);
+  draw_field(F_PW, 40, 226, 360, 1);
+  button(40, 276, 100, 26, "Done", 1);
+  draw_msg(40, 322, 76);
+  label(40, 440, "Tab: next box    Enter: done", DIM);
+}
+void draw_newpg() {
+  text(40, 26, "New page", HEAD, 2);
+  label(40, 70, "Page name (lower case letters, digits and -)", INK);
+  draw_field(F_PAGE, 40, 82, 360, 0);
+  button(40, 130, 100, 26, "Create", 1);
+  button(150, 130, 100, 26, "Cancel", 0);
+  draw_msg(40, 180, 76);
+  label(40, 440, "Enter: create    Tab: cancel", DIM);
+}
+void draw_all() {
+  clear(BG);
+  if (scr == S_START) { draw_start(); }
+  else if (scr == S_EDIT) { draw_edit(); }
+  else if (scr == S_INFO) { draw_info(); }
+  else { draw_newpg(); }
+}
+
+// ------------------------------------------------------------------ input
+void field_key(int f, int k, int mx) {
+  int a = fa(f);
+  if (k == 8) { if (flen[f] > 0) { flen[f]--; poke(a + flen[f], 0); } }
+  else if (k >= 32 && k <= 126 && flen[f] < mx) { poke(a + flen[f], k); flen[f]++; poke(a + flen[f], 0); }
+}
+void bar_do(int which) {
+  if (which == 0) { do_publish(); }
+  else if (which == 1) { scr = S_INFO; focus = F_NAME; mcol = DIM; sbuf[0] = 0; }
+  else if (which == 2) { scr = S_NEWPG; focus = F_PAGE; fclear(F_PAGE); sbuf[0] = 0; }
+  else { scr = S_START; focus = F_DOM; sstate = 0; fclear(F_PW2); setmsg("Your pages are still in memory until you close the window; publish first!", AMBER); }
+}
+void input_start() {
+  int k = gk;
+  if (hit(412, 108, 110, 22)) { check_name(); focus = F_DOM; return; }
+  if (hit(40, 252, 120, 26)) { do_continue(); return; }
+  if (hit(40, 108, 360, 22)) { focus = F_DOM; }
+  if (hit(40, 158, 360, 22)) { focus = F_PW; }
+  if (sstate == 1 && hit(40, 208, 360, 22)) { focus = F_PW2; }
+  if (hit(40, 398, 560, 22)) { focus = F_GW; }
+  if (k == 9) {
+    if (focus == F_DOM) { focus = F_PW; }
+    else if (focus == F_PW) { if (sstate == 1) { focus = F_PW2; } else { focus = F_GW; } }
+    else if (focus == F_PW2) { focus = F_GW; }
+    else { focus = F_DOM; }
+    return;
+  }
+  if (k == 10) { if (focus == F_DOM) { check_name(); } else { do_continue(); } return; }
+  if (focus == F_DOM && (k == 8 || k > 31)) { field_key(F_DOM, k, 30); sstate = 0; }
+  else if (focus == F_PW) { field_key(F_PW, k, 64); }
+  else if (focus == F_PW2) { field_key(F_PW2, k, 64); }
+  else if (focus == F_GW) { field_key(F_GW, k, 70); }
+}
+void input_edit() {
+  int k = gk;
+  int i;
+  if (hit(8, 384, 84, 24)) { bar_do(0); return; }
+  if (hit(100, 384, 90, 24)) { bar_do(1); return; }
+  if (hit(198, 384, 90, 24)) { bar_do(2); return; }
+  if (hit(296, 384, 90, 24)) { bar_do(3); return; }
+  if (gclk && gmx < 154 && gmy >= 38) {
+    i = (gmy - 39) / 14;
+    if (i >= 0 && i < npg) { open_page(i); focus = F_DOC; }
+    return;
+  }
+  if (gclk && gmx >= EX - 4 && gmy >= EY - 4 && gmy < EY + 348) { focus = F_DOC; click_doc(gmx, gmy); return; }
+  if (k == 9) {
+    if (focus == F_DOC) { focus = F_LIST; }
+    else if (focus == F_LIST) { focus = F_BAR; barsel = 0; }
+    else { focus = F_DOC; }
+    return;
+  }
+  if (focus == F_DOC) { if (k != 0) { doc_key(k); } }
+  else if (focus == F_LIST) {
+    if (k == 128 && cur > 0) { open_page(cur - 1); }
+    else if (k == 129 && cur + 1 < npg) { open_page(cur + 1); }
+    else if (k == 10) { focus = F_DOC; }
+  } else {
+    if (k == 130 && barsel > 0) { barsel--; }
+    else if (k == 131 && barsel < 3) { barsel++; }
+    else if (k == 10) { bar_do(barsel); }
+  }
+}
+void input_info() {
+  int k = gk;
+  if (hit(40, 82, 480, 22)) { focus = F_NAME; }
+  if (hit(40, 130, 480, 22)) { focus = F_DESC; }
+  if (hit(40, 178, 480, 22)) { focus = F_TAGS; }
+  if (hit(40, 226, 360, 22)) { focus = F_PW; }
+  if (hit(40, 276, 100, 26) || k == 10) { scr = S_EDIT; focus = F_DOC; pgdirty[cur] = 1; sbuf[0] = 0; return; }
+  if (k == 9) {
+    if (focus == F_NAME) { focus = F_DESC; }
+    else if (focus == F_DESC) { focus = F_TAGS; }
+    else if (focus == F_TAGS) { focus = F_PW; }
+    else { focus = F_NAME; }
+    return;
+  }
+  if (focus == F_NAME) { field_key(F_NAME, k, 60); }
+  else if (focus == F_DESC) { field_key(F_DESC, k, 70); }
+  else if (focus == F_TAGS) { field_key(F_TAGS, k, 70); }
+  else { field_key(F_PW, k, 64); }
+}
+void input_newpg() {
+  int k = gk;
+  if (hit(40, 82, 360, 22)) { focus = F_PAGE; }
+  if (hit(40, 130, 100, 26) || k == 10) { add_page(); return; }
+  if (hit(150, 130, 100, 26) || k == 9) { scr = S_EDIT; focus = F_DOC; sbuf[0] = 0; return; }
+  field_key(F_PAGE, k, 29);
+}
+
+void main() {
+  heapinit(endmark + 16);
+  scr = S_START;
+  focus = F_DOM;
+  setmsg("Looking for the publishing gateway ...", DIM);
+  gmx = 0;
+  gmy = 0;
+  gclk = 0;
+  draw_all();
+  present();
+  find_gateway();
+  setmsg("Choose a name for your site, then press Check name.", DIM);
+  while (1) {
+    frame();
+    gk = key();
+    gmx = mousex();
+    gmy = mousey();
+    gclk = click();
+    if (scr == S_START) { input_start(); }
+    else if (scr == S_EDIT) { input_edit(); }
+    else if (scr == S_INFO) { input_info(); }
+    else { input_newpg(); }
+    draw_all();
+    present();
+  }
+}

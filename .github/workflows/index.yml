@@ -1,0 +1,24 @@
+name: Rebuild the search index
+on:
+  push:
+    branches: [main]
+    paths: ["sites/**", "secure/**"]
+  workflow_dispatch:
+concurrency:
+  group: index
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/index.py
+      - run: python3 tests/test_index.py
+      - name: Commit the new index
+        run: |
+          git config user.name "kestrel-indexer"
+          git config user.email "indexer@users.noreply.github.com"
+          git add _search
+          git diff --cached --quiet || (git commit -m "Rebuild search index" && git pull --rebase origin main && git push)
