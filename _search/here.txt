@@ -1,0 +1,2 @@
+3|kes://home/|Kestrel Home|Welcome to the Kestrel Web This is a small private web made for Kestrel OS. It is not conn
+3|kess://kestrel/|Kestrel Official|Kestrel Official Sites with kess addresses live in the reviewed secure folder. Only the pr

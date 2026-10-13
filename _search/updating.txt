@@ -1,0 +1,2 @@
+11|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks
+3|kes://docs/|Kestrel Docs|Kestrel Docs Guides for using Kestrel OS and the Kestrel web. Setting up WiFi Updating the

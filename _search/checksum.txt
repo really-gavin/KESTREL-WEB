@@ -1,0 +1,1 @@
+1|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks

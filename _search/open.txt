@@ -1,0 +1,2 @@
+3|kess://kestrel/|Kestrel Official|Kestrel Official Sites with kess addresses live in the reviewed secure folder. Only the pr
+1|kes://docs/wifi.html|Setting up WiFi|Setting up WiFi Plug in a supported USB WiFi adapter, then use the wifi command to scan fo

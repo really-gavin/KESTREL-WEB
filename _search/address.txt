@@ -1,0 +1,2 @@
+4|kes://home/|Kestrel Home|Welcome to the Kestrel Web This is a small private web made for Kestrel OS. It is not conn
+1|kes://docs/wifi.html|Setting up WiFi|Setting up WiFi Plug in a supported USB WiFi adapter, then use the wifi command to scan fo

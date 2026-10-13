@@ -1,0 +1,4 @@
+name=Kestrel News
+owner=Kestrel
+description=Release notes and project news
+tags=news release update changelog

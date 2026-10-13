@@ -1,0 +1,2 @@
+12|kes://apps/|Kestrel Apps|Kestrel Apps Install an app with app install followed by its name. browser: the Kestrel we
+3|kes://news/|Kestrel News|Kestrel News The Kestrel web arrives Kestrel now has its own private web with kes and kess

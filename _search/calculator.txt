@@ -1,0 +1,1 @@
+11|kes://apps/|Kestrel Apps|Kestrel Apps Install an app with app install followed by its name. browser: the Kestrel we

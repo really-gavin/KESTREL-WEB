@@ -1,0 +1,2 @@
+11|kes://docs/wifi.html|Setting up WiFi|Setting up WiFi Plug in a supported USB WiFi adapter, then use the wifi command to scan fo
+3|kes://docs/|Kestrel Docs|Kestrel Docs Guides for using Kestrel OS and the Kestrel web. Setting up WiFi Updating the

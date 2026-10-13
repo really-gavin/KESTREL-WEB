@@ -1,0 +1,479 @@
+# Kestrel Browser 3.0: opens the Kestrel web. kes:// pages come from the open sites folder of the KESTREL-WEB repository,
+# kess:// pages from its reviewed secure folder, and words typed in the address bar are searched in the Kestrel web's own index.
+# The OS downloads a page and turns its HTML into a small markup (headings, links, paragraphs); this program is the window:
+# address bar, Back/Forward/Reload, links you click, scrolling. It does not open the wider internet.
+use kestrel.graphics
+use kestrel.input
+use kestrel.math
+use kestrel.text
+use kestrel.network
+
+app "Kestrel Browser" {
+    version: "3.0.0"
+    author: "Kestrel"
+    description: "Browser for the Kestrel web (kes:// and kess://) with search"
+    permissions: [network]
+    memory: "1024"
+}
+
+const TOOL_H = 58
+const STATUS_H = 22
+const LEFT = 16
+const LINE_H = 20
+
+let current_url: String = "kes://home/"
+let address: String = "kes://home/"
+let page_title: String = "Kestrel Home"
+let page: String = ""
+let status: String = ""
+let hover_text: String = ""
+let pending: String = ""
+let go_pending: Bool = false
+let load_shown: Bool = false
+let address_focused: Bool = false
+let addr_fresh: Bool = false
+let scroll_y: Int = 0
+let page_h: Int = 0
+let nlines: Int = 0
+let laid_width: Int = 0
+let last_hover: Int = -1
+let back_stack: List<String> = []
+let forward_stack: List<String> = []
+let started: Bool = false
+
+fn has_prefix(s: String, p: String) -> Bool {
+    if len(s) < len(p) { return false }
+    return slice(s, 0, len(p)) == p
+}
+
+fn has_suffix(s: String, p: String) -> Bool {
+    if len(s) < len(p) { return false }
+    return slice(s, len(s) - len(p), len(s)) == p
+}
+
+fn find_char(s: String, c: Char, from: Int) -> Int {
+    let i = from
+    let n = len(s)
+    while i < n and s[i] != c { i = i + 1 }
+    return i
+}
+
+fn find_sub(hay: String, needle: String, from: Int) -> Int {
+    let n = len(hay)
+    let m = len(needle)
+    let i = from
+    while i + m <= n {
+        let j = 0
+        while j < m and hay[i + j] == needle[j] { j = j + 1 }
+        if j == m { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+fn count_char(url: String, c: Char) -> Int {
+    let i = 0
+    let n = len(url)
+    let k = 0
+    while i < n {
+        if url[i] == c { k = k + 1 }
+        i = i + 1
+    }
+    return k
+}
+
+fn has_scheme(url: String) -> Bool {
+    let i = 0
+    let n = len(url)
+    while i + 2 < n {
+        if url[i] == ':' and url[i + 1] == '/' and url[i + 2] == '/' { return true }
+        i = i + 1
+    }
+    return false
+}
+
+fn parse_int(s: String) -> Int {
+    let i = 0
+    let v = 0
+    while i < len(s) and s[i] >= '0' and s[i] <= '9' {
+        v = v * 10 + ((s[i] as Int) - 48)
+        i = i + 1
+    }
+    return v
+}
+
+# The Kestrel web lives in a GitHub repository: kes:// addresses are in sites/, kess:// addresses (reviewed, official) in secure/.
+fn web_base() -> String { return "https://raw.githubusercontent.com/really-gavin/KESTREL-WEB/main/" }
+
+# kes://docs/wifi  ->  the file that holds that page
+fn to_real(url: String) -> String {
+    let folder = "sites/"
+    let rest = ""
+    if has_prefix(url, "kess://") {
+        folder = "secure/"
+        rest = slice(url, 7, len(url))
+    } else {
+        rest = slice(url, 6, len(url))
+    }
+    if count_char(rest, '/') == 0 {
+        rest = rest + "/index.html"
+    } else if rest[len(rest) - 1] == '/' {
+        rest = rest + "index.html"
+    } else {
+        let last = len(rest) - 1
+        while last > 0 and rest[last] != '/' { last = last - 1 }
+        if find_char(rest, '.', last) >= len(rest) { rest = rest + ".html" }
+    }
+    return web_base() + folder + rest
+}
+
+# a file in the repository  ->  its kes:// or kess:// address
+fn to_kes(real: String) -> String {
+    let sites = web_base() + "sites/"
+    let secure = web_base() + "secure/"
+    let out = real
+    if has_prefix(real, sites) {
+        out = "kes://" + slice(real, len(sites), len(real))
+    } else if has_prefix(real, secure) {
+        out = "kess://" + slice(real, len(secure), len(real))
+    } else {
+        return real
+    }
+    if has_suffix(out, "/index.html") { out = slice(out, 0, len(out) - 10) }
+    return out
+}
+
+fn is_web(url: String) -> Bool {
+    return has_prefix(url, "kes://") or has_prefix(url, "kess://")
+}
+
+# Turn what was typed into an address.
+fn normalize(raw: String) -> String {
+    let n = len(raw)
+    let a = 0
+    let b = n
+    while a < b and raw[a] == ' ' { a = a + 1 }
+    while b > a and raw[b - 1] == ' ' { b = b - 1 }
+    if a > 0 or b < n { return normalize(slice(raw, a, b)) }
+    if n == 0 { return "kes://home/" }
+    if has_scheme(raw) { return to_kes(raw) }
+    if count_char(raw, ' ') > 0 or count_char(raw, '.') > 0 or count_char(raw, '/') > 0 { return "kes://search?q=" + query_text(raw) }
+    return "kes://" + raw + "/"
+}
+
+# letters and digits of a typed search, words joined by +
+fn query_text(raw: String) -> String {
+    let q = ""
+    let pend = false
+    let i = 0
+    while i < len(raw) {
+        let c = raw[i]
+        if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') {
+            if pend and len(q) > 0 { q = q + "+" }
+            pend = false
+            q = q + str(c)
+        } else {
+            pend = true
+        }
+        i = i + 1
+    }
+    return q
+}
+
+# one search word, lower case, with a trailing s taken off (the index does the same)
+fn norm_term(w: String) -> String {
+    let t = ""
+    let i = 0
+    while i < len(w) {
+        let c = w[i]
+        if c >= 'A' and c <= 'Z' { c = ((c as Int) + 32) as Char }
+        t = t + str(c)
+        i = i + 1
+    }
+    let n = len(t)
+    if n > 3 and t[n - 1] == 's' and t[n - 2] != 's' { t = slice(t, 0, n - 1) }
+    return t
+}
+
+fn is_stop(t: String) -> Bool {
+    if len(t) < 2 or len(t) > 24 { return true }
+    let stops = " the and for are but not you all any can had her was one our out has have this that with from they will what when your then them were been into more some such than also its who how "
+    return find_sub(stops, " " + t + " ", 0) >= 0
+}
+
+# the score the term file text gives to a page, or -1
+fn score_of(text: String, addr: String) -> Int {
+    let at = find_sub(text, "|" + addr + "|", 0)
+    if at < 0 { return -1 }
+    let s = at
+    while s > 0 and text[s - 1] != '\n' { s = s - 1 }
+    return parse_int(slice(text, s, at))
+}
+
+fn fetch_terms(w: String) -> String {
+    let t = fetch_page(web_base() + "_search/" + w + ".txt") + ""
+    if find_sub(t, "\n@Could not load", 0) >= 0 { return "" }
+    return t
+}
+
+fn search_page(q: String) -> String {
+    let shown = ""
+    let t1 = ""
+    let t2 = ""
+    let t3 = ""
+    let nt = 0
+    let i = 0
+    let n = len(q)
+    while i < n {
+        let e = find_char(q, '+', i)
+        let w = norm_term(slice(q, i, e))
+        i = e + 1
+        if not is_stop(w) and nt < 3 {
+            if nt > 0 { shown = shown + " " }
+            shown = shown + w
+            nt = nt + 1
+            if nt == 1 { t1 = fetch_terms(w) } else if nt == 2 { t2 = fetch_terms(w) } else { t3 = fetch_terms(w) }
+        }
+    }
+    let out = "=kes://search?q=" + q + "\n@Search: " + shown + "\n# Search results\n"
+    let found = 0
+    if nt == 0 {
+        out = out + "Type a few words in the address bar to search the Kestrel web.\n"
+    } else {
+        let pos = 0
+        let total = len(t1)
+        while pos < total and found < 10 and len(out) < 3400 {
+            let eol = find_char(t1, '\n', pos)
+            let line = slice(t1, pos, eol)
+            pos = eol + 1
+            if len(line) > 0 and line[0] >= '0' and line[0] <= '9' {
+                let p1 = find_char(line, '|', 0)
+                let p2 = find_char(line, '|', p1 + 1)
+                let p3 = find_char(line, '|', p2 + 1)
+                let addr = slice(line, p1 + 1, p2)
+                let ok = true
+                if nt >= 2 and score_of(t2, addr) < 0 { ok = false }
+                if nt >= 3 and score_of(t3, addr) < 0 { ok = false }
+                if ok {
+                    found = found + 1
+                    out = out + "[" + slice(line, p2 + 1, p3) + "](" + addr + ")\n" + addr + " - " + slice(line, p3 + 1, len(line)) + "\n\n"
+                }
+            }
+        }
+        if found == 0 { out = out + "No pages matched. Try fewer or different words.\n\n" }
+    }
+    return out + "[Home](kes://home/)"
+}
+
+fn missing_page(url: String) -> String {
+    let w = slice(url, 6, len(url))
+    if has_prefix(url, "kess://") { w = slice(url, 7, len(url)) }
+    let host = slice(w, 0, find_char(w, '/', 0))
+    return "=" + url + "\n@Not found\n# Page not found\nThere is no page at " + url + " or it could not be downloaded. If the network is down, check it with the wifi and net commands.\n\n[Search for " + host + "](kes://search?q=" + query_text(host) + ")\n[Home](kes://home/)"
+}
+
+fn blocked_page(url: String) -> String {
+    return "=" + url + "\n@Not on the Kestrel web\n# Not on the Kestrel web\nThis browser only opens kes:// and kess:// pages. The address " + url + " is outside the Kestrel web, so it was not opened.\n\n[Home](kes://home/)\n[Search](kes://search?q=kestrel)"
+}
+
+fn header_line(start: Int, mark: Char) -> String {
+    # the page text begins with =address and @title lines
+    let n = len(page)
+    let i = start
+    if i >= n or page[i] != mark { return "" }
+    let j = i + 1
+    while j < n and page[j] != '\n' { j = j + 1 }
+    return slice(page, i + 1, j)
+}
+
+fn load_now(url: String) {
+    let shown = url
+    if has_prefix(url, "kes://search?q=") {
+        page = set_page(search_page(slice(url, 15, len(url))))
+    } else if is_web(url) {
+        page = fetch_page(to_real(url))
+        if find_sub(page, "\n@Could not load", 0) >= 0 { page = set_page(missing_page(url)) } else { shown = to_kes(header_line(0, '=')) }
+    } else {
+        page = set_page(blocked_page(url))
+    }
+    current_url = url
+    if is_web(shown) { current_url = shown }
+    address = current_url
+    page_title = header_line(find_char(page, '\n', 0) + 1, '@')
+    scroll_y = 0
+    laid_width = 0
+    last_hover = -1
+    hover_text = ""
+    address_focused = false
+    status = ""
+}
+
+fn navigate(raw: String, add_history: Bool) {
+    let url = normalize(raw)
+    if add_history { back_stack.push(current_url); forward_stack.clear() }
+    pending = url
+    go_pending = true
+    load_shown = false
+    status = "Loading " + url + " ..."
+    address_focused = false
+}
+
+fn go_back() {
+    if back_stack.len() > 0 {
+        forward_stack.push(current_url)
+        navigate(back_stack.pop(), false)
+    }
+}
+
+fn go_forward() {
+    if forward_stack.len() > 0 {
+        back_stack.push(current_url)
+        navigate(forward_stack.pop(), false)
+    }
+}
+
+fn link_at(mx: Int, my: Int) -> Int {
+    if my < TOOL_H or my >= window_height() - STATUS_H { return -1 }
+    let i = 0
+    while i < nlines {
+        if page_line(i, 0) == 2 {
+            let y = page_line(i, 3) + TOOL_H + 12 - scroll_y
+            if my >= y and my < y + LINE_H {
+                let w = (page_line(i, 2) - page_line(i, 1)) * 8
+                if mx >= LEFT and mx < LEFT + w { return i }
+            }
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn draw_page(ww: Int, wh: Int, hot: Int) {
+    let i = 0
+    while i < nlines {
+        let y = page_line(i, 3) + TOOL_H + 12 - scroll_y
+        if y > TOOL_H - 30 and y < wh {
+            let k = page_line(i, 0)
+            let s = page_line(i, 1)
+            let e = page_line(i, 2)
+            if k == 1 {
+                draw_text_range(LEFT, y, page, s, e, 0x172554, 2)
+            } else if k == 2 {
+                let c = 0x2563EB
+                if i == hot { c = 0xD97706 }
+                draw_text_range(LEFT, y, page, s, e, c, 1)
+                line(LEFT, y + 10, LEFT + (e - s) * 8, y + 10, c)
+            } else {
+                draw_text_range(LEFT, y, page, s, e, 0x1F2937, 1)
+            }
+        }
+        if y >= wh { break }
+        i = i + 1
+    }
+}
+
+fn main() {
+    window {
+        title: "Kestrel Browser"
+        size: (800, 600)
+        resizable: true
+        draw {
+            let ww = window_width()
+            let wh = window_height()
+            let track_h = wh - TOOL_H - STATUS_H
+            if not started {
+                started = true
+                navigate("kes://home/", false)
+            }
+            # A page is loaded one frame after "Loading..." was drawn, so the window never looks frozen without a message.
+            if go_pending {
+                if load_shown {
+                    go_pending = false
+                    load_now(pending)
+                } else {
+                    load_shown = true
+                }
+            }
+            if laid_width != ww and not go_pending {
+                laid_width = ww
+                nlines = layout_page(ww - 40)
+                page_h = page_line(0, 6) + 12
+            }
+            let max_scroll = max(0, page_h - track_h)
+            scroll_y = clamp(scroll_y, 0, max_scroll)
+
+            let mx = mouse_x()
+            let my = mouse_y()
+            let hot = -1
+            if not go_pending { hot = link_at(mx, my) }
+            if hot != last_hover {
+                last_hover = hot
+                hover_text = ""
+                if hot >= 0 { hover_text = slice(page, page_line(hot, 4), page_line(hot, 5)) }
+            }
+            if clicked() and not go_pending {
+                if my >= 8 and my <= 38 and mx >= 8 and mx <= 52 { go_back() }
+                else if my >= 8 and my <= 38 and mx >= 58 and mx <= 102 { go_forward() }
+                else if my >= 8 and my <= 38 and mx >= 108 and mx <= 152 { navigate(current_url, false) }
+                else if my >= 8 and my <= 38 and mx >= 164 { address_focused = true; addr_fresh = true }
+                else {
+                    address_focused = false
+                    if hot >= 0 { navigate(slice(page, page_line(hot, 4), page_line(hot, 5)), true) }
+                }
+            }
+            let k = key()
+            if address_focused {
+                if k == KEY_ENTER { navigate(address, true) }
+                else if k == 8 {
+                    if addr_fresh { address = ""; addr_fresh = false }
+                    else if len(address) > 0 { address = slice(address, 0, len(address) - 1) }
+                }
+                else if k >= 32 and k <= 126 {
+                    if addr_fresh { address = ""; addr_fresh = false }
+                    address = address + str(k as Char)
+                }
+            } else {
+                if k == KEY_UP { scroll_y = max(0, scroll_y - LINE_H * 2) }
+                else if k == KEY_DOWN { scroll_y = min(max_scroll, scroll_y + LINE_H * 2) }
+                else if k == 32 { scroll_y = min(max_scroll, scroll_y + max(40, track_h - 40)) }
+                else if k == 'b' as Int { scroll_y = max(0, scroll_y - max(40, track_h - 40)) }
+                else if k == 9 or k == 47 { address_focused = true; addr_fresh = true }
+                else if k == 'h' as Int { navigate("kes://home/", true) }
+            }
+
+            clear(0xFFFFFF)
+            draw_page(ww, wh, hot)
+            rect(0, 0, ww, TOOL_H, 0xE2E8F0)
+            if back_stack.len() == 0 { rect(8, 8, 44, 30, 0xE2E8F0) } else { rect(8, 8, 44, 30, 0xCBD5E1) }
+            if forward_stack.len() == 0 { rect(58, 8, 44, 30, 0xE2E8F0) } else { rect(58, 8, 44, 30, 0xCBD5E1) }
+            rect(108, 8, 44, 30, 0xCBD5E1)
+            let c_back = 0x334155
+            if back_stack.len() == 0 { c_back = 0x94A3B8 }
+            let c_fwd = 0x334155
+            if forward_stack.len() == 0 { c_fwd = 0x94A3B8 }
+            draw_text(26, 17, "<", c_back, 1)
+            draw_text(76, 17, ">", c_fwd, 1)
+            draw_text(126, 17, "R", 0x334155, 1)
+            let addr_x = 164
+            let addr_w = ww - 180
+            rect(addr_x, 8, addr_w, 30, 0xFFFFFF)
+            if address_focused { rect(addr_x, 8, addr_w, 2, 0x2563EB) }
+            let shown = address
+            let room = (addr_w - 16) / 8
+            if len(shown) > room and room > 4 { shown = slice(shown, len(shown) - room, len(shown)) }
+            draw_text(addr_x + 8, 17, shown, 0x0F172A, 1)
+            if address_focused { line(addr_x + 8 + len(shown) * 8, 14, addr_x + 8 + len(shown) * 8, 31, 0x2563EB) }
+            if has_prefix(current_url, "kess://") { draw_text(ww - 80, 42, "SECURE", 0x15803D, 1) }
+            draw_text_range(12, 42, page_title, 0, min(len(page_title), (ww - 24) / 8), 0x334155, 1)
+            if page_h > track_h and track_h > 0 {
+                rect(ww - 8, TOOL_H, 4, track_h, 0xE2E8F0)
+                let thumb_h = max(24, track_h * track_h / page_h)
+                let thumb_y = TOOL_H + (track_h - thumb_h) * scroll_y / max(1, max_scroll)
+                rect(ww - 8, thumb_y, 4, thumb_h, 0x64748B)
+            }
+            rect(0, wh - STATUS_H, ww, STATUS_H, 0xE2E8F0)
+            if go_pending { draw_text_range(10, wh - STATUS_H + 7, status, 0, min(len(status), (ww - 20) / 8), 0xB45309, 1) }
+            else { draw_text_range(10, wh - STATUS_H + 7, hover_text, 0, min(len(hover_text), (ww - 20) / 8), 0x475569, 1) }
+        }
+    }
+}

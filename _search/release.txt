@@ -1,0 +1,2 @@
+14|kes://news/|Kestrel News|Kestrel News The Kestrel web arrives Kestrel now has its own private web with kes and kess
+1|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks

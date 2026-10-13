@@ -1,0 +1,4 @@
+name=Kestrel Home
+owner=Kestrel
+description=The start page of the Kestrel web
+tags=home start welcome kestrel

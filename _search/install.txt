@@ -1,0 +1,3 @@
+16|kes://apps/|Kestrel Apps|Kestrel Apps Install an app with app install followed by its name. browser: the Kestrel we
+3|kes://home/|Kestrel Home|Welcome to the Kestrel Web This is a small private web made for Kestrel OS. It is not conn
+1|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks

@@ -1,0 +1,4 @@
+name=Kestrel Apps
+owner=Kestrel
+description=Programs you can install on Kestrel OS
+tags=apps programs install browser snake game paint calculator

@@ -1,0 +1,1 @@
+2|kes://docs/wifi.html|Setting up WiFi|Setting up WiFi Plug in a supported USB WiFi adapter, then use the wifi command to scan fo

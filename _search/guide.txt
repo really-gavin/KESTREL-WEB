@@ -1,0 +1,4 @@
+15|kes://docs/|Kestrel Docs|Kestrel Docs Guides for using Kestrel OS and the Kestrel web. Setting up WiFi Updating the
+12|kes://docs/publish.html|Publishing a site|Publishing a site on the Kestrel web A site is a folder in the sites directory of the Kest
+12|kes://docs/update.html|Updating the OS|Updating the OS Run sys update. Kestrel looks for the newest release, downloads it, checks
+12|kes://docs/wifi.html|Setting up WiFi|Setting up WiFi Plug in a supported USB WiFi adapter, then use the wifi command to scan fo

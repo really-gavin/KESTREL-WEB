@@ -1,0 +1,4 @@
+name=Kestrel Docs
+owner=Kestrel
+description=Guides to Kestrel OS, apps and the Kestrel web
+tags=docs help guide manual wifi update apps
