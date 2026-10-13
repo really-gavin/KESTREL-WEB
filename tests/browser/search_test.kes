@@ -9,7 +9,7 @@ use kestrel.text
 use kestrel.network
 
 app "Kestrel Browser" {
-    version: "3.0.0"
+    version: "3.1.0"
     author: "Kestrel"
     description: "Browser for the Kestrel web (kes:// and kess://) with search"
     permissions: [network]
@@ -158,7 +158,7 @@ fn normalize(raw: String) -> String {
     if n == 0 { return "kes://home/" }
     if has_scheme(raw) { return to_kes(raw) }
     if count_char(raw, ' ') > 0 or count_char(raw, '.') > 0 or count_char(raw, '/') > 0 { return "kes://search?q=" + query_text(raw) }
-    return "kes://" + raw + "/"
+    return "kes://search?q=" + query_text(raw)
 }
 
 # letters and digits of a typed search, words joined by +
@@ -178,6 +178,18 @@ fn query_text(raw: String) -> String {
         i = i + 1
     }
     return q
+}
+
+fn lower_text(w: String) -> String {
+    let t = ""
+    let i = 0
+    while i < len(w) {
+        let c = w[i]
+        if c >= 'A' and c <= 'Z' { c = ((c as Int) + 32) as Char }
+        t = t + str(c)
+        i = i + 1
+    }
+    return t
 }
 
 # one search word, lower case, with a trailing s taken off (the index does the same)
@@ -237,6 +249,9 @@ fn search_page(q: String) -> String {
     }
     let out = "=kes://search?q=" + q + "\n@Search: " + shown + "\n# Search results\n"
     let found = 0
+    if nt >= 1 and find_char(q, '+', 0) >= len(q) and len(q) > 0 and find_sub(t1, "|kes://" + lower_text(q) + "/", 0) >= 0 {
+        out = out + "[Open the site kes://" + lower_text(q) + "/](kes://" + lower_text(q) + "/)\n\n"
+    }
     if nt == 0 {
         out = out + "Type a few words in the address bar to search the Kestrel web.\n"
     } else {
@@ -376,6 +391,16 @@ fn draw_page(ww: Int, wh: Int, hot: Int) {
 fn show(label: String, s: String) { print(label + " => " + s) }
 fn main() {
     show("n1", normalize("docs"))
+    show("n1b", normalize("Gavin"))
+    print(search_page("gavin"))
+    print("----")
+    print(search_page("Gavin+welcome"))
+    print("----")
+    show("n1b", normalize("Gavin"))
+    print(search_page("gavin"))
+    print("----")
+    print(search_page("Gavin+welcome"))
+    print("----")
     show("n2", normalize("  snake game "))
     show("n3", normalize("example.com"))
     show("n4", normalize(""))
